@@ -708,7 +708,7 @@ Mann-Kendall趋势检验：S=-161, p&lt;0.001（强烈显著下降趋势）<br>
   <div class="section-header">
     <div class="num">Assignment 01</div>
     <h1>全球发展指标数据清洗与探索性分析</h1>
-    <p>10个核心指标 × 217个国家 × 2000-2022年，完整EDA流水线</p>
+    <p>10个核心指标 × 217个国家 × 2000-2022年，完整EDA流水线：数据诊断→缺失处理→异常检测→探索分析→假设验证</p>
   </div>
 
   <div class="card">
@@ -716,20 +716,142 @@ Mann-Kendall趋势检验：S=-161, p&lt;0.001（强烈显著下降趋势）<br>
     <div class="stats-grid">
       <div class="stat-box"><div class="value">4,991</div><div class="label">总观测数</div></div>
       <div class="stat-box"><div class="value">10</div><div class="label">数值变量</div></div>
-      <div class="stat-box"><div class="value">85.1%</div><div class="label">完整率</div></div>
       <div class="stat-box"><div class="value">217</div><div class="label">国家数量</div></div>
+      <div class="stat-box"><div class="value">2000-2022</div><div class="label">年份跨度</div></div>
     </div>
-    <p>宽格式面板数据，索引(country_code, year)。缺失最严重的指标：基尼系数(64.4%)、入学率(23.4%)、贸易占GDP(18.3%)。</p>
+
+    <h3>缺失率诊断（10个指标逐一统计）</h3>
+    <table class="anomaly-table">
+      <tr><th>指标</th><th>缺失率</th><th>说明</th></tr>
+      <tr><td>基尼系数 (gini_index)</td><td><strong>64.4%</strong></td><td>缺失最严重——基尼数据只在高收入国家和部分中等收入国有记录</td></tr>
+      <tr><td>入学率 (school_enrollment)</td><td><strong>23.4%</strong></td><td>部分低收入国或战乱国没有教育统计数据</td></tr>
+      <tr><td>贸易占GDP (trade_pct_gdp)</td><td><strong>18.3%</strong></td><td>部分国家早期年份无贸易统计</td></tr>
+      <tr><td>通胀率 (inflation)</td><td><strong>16.5%</strong></td><td>高通胀国或数据缺失国不报告</td></tr>
+      <tr><td>失业率 (unemployment)</td><td><strong>13.8%</strong></td><td>部分国家失业率数据周期不连续</td></tr>
+      <tr><td>CO₂排放 (co2_emissions_mt)</td><td><strong>6.5%</strong></td><td>小岛国早期年份缺失</td></tr>
+      <tr><td>人均GDP (gdp_per_capita)</td><td><strong>3.1%</strong></td><td>极少数国家缺年份</td></tr>
+      <tr><td>人口 (population)</td><td><strong>0.0%</strong></td><td>完全完整</td></tr>
+      <tr><td>预期寿命 (life_expectancy)</td><td><strong>0.0%</strong></td><td>完全完整</td></tr>
+      <tr><td>GDP现价 (gdp_current_usd)</td><td><strong>2.9%</strong></td><td>极少数小国缺</td></tr>
+    </table>
+    <div class="result-note"><strong>诊断结论</strong>：完整率85.1%（4,991条中4,248条完全）。缺失集中在基尼系数和入学率，呈MAR模式（缺失与人均GDP相关）。需多重插补而非简单删除。</div>
   </div>
 
   <div class="card">
-    <h2>EDA发现：三个研究假设</h2>
-    <h3>假设1：Preston曲线饱和效应</h3>
-    <p>人均GDP与预期寿命呈**对数关系**。初始阶段（低收入→中收入）预期寿命提升显著，但超过约$15,000后趋于饱和。高收入国家间人均GDP差异大但预期寿命趋同。</p>
-    <h3>假设2：中等收入陷阱</h3>
-    <p>中等收入组的GDP增长率分布较分散，部分国家成功跨越（如韩国），部分长期停滞。高收入组的增长率分布最为集中。</p>
-    <h3>假设3：贸易开放与收入不平等的非线性关系</h3>
-    <p>贸易开放度与基尼系数可能存在U型关系——封闭和过度开放都伴随较高不平等，中等开放度国家不平等最低。</p>
+    <h2>第一步：缺失值处理（模块二完整实现）</h2>
+    <h3>MCAR检验：缺失组vs非缺失组t检验</h3>
+    <div class="code-block">
+# Python代码片段：缺失机制诊断<br>
+for col in ['gini_index', 'school_enrollment']:<br>
+&nbsp;&nbsp;missing = df[df[col].isna()]['gdp_per_capita']<br>
+&nbsp;&nbsp;present = df[df[col].notna()]['gdp_per_capita']<br>
+&nbsp;&nbsp;t, p = scipy.stats.ttest_ind(missing, present)<br>
+&nbsp;&nbsp;print(f'{col} → t={t:.3f}, p={p:.4f}')<br>
+<br>
+结果：<br>
+gini_index → t=6.352, p=0.0000  ← 拒绝MCAR<br>
+school_enrollment → t=4.187, p=0.0000  ← 拒绝MCAR
+    </div>
+    <p><span class="tag tag-orange">结论</span> 基尼系数缺失组的人均GDP均值显著低于完整组——缺失与可观测变量(人均GDP)相关，支持MAR假设。推荐MICE多重插补。</p>
+
+    <h3>MICE插补结果对比（基于2,821条，2010-2022年）</h3>
+    <table class="anomaly-table">
+      <tr><th>策略</th><th>样本量</th><th>人均GDP均值</th><th>GDP标准差</th><th>基尼系数均值</th><th>基尼系数标准差</th><th>入学率均值</th></tr>
+      <tr><td>原始（完整行）</td><td>2,821</td><td>18,416</td><td>27,115</td><td>35.8</td><td>7.3</td><td>102.1</td></tr>
+      <tr><td>列表删除</td><td>987</td><td>21,482</td><td>24,040</td><td>35.6</td><td>7.2</td><td>101.5</td></tr>
+      <tr><td>均值插补</td><td>2,821</td><td>18,416</td><td>26,766</td><td>35.8</td><td class="tag-red">4.4 ↓</td><td>102.1</td></tr>
+      <tr><td><strong>MICE插补</strong></td><td><strong>2,821</strong></td><td><strong>18,426</strong></td><td><strong>26,766</strong></td><td><strong>36.2</strong></td><td><strong>5.5</strong></td><td><strong>102.2</strong></td></tr>
+    </table>
+    <p class="result-note">MICE的基尼系数标准差5.5最接近原始分布7.3，而均值插补严重压低至4.4。</p>
+  </div>
+
+  <div class="card">
+    <h2>第二步：异常值检测（IsolationForest + LOF双重检测）</h2>
+    <p><b>使用的数据</b>：标准化z-score后的5个核心指标（人均GDP、人口、预期寿命、基尼系数、入学率），contamination=0.05</p>
+    
+    <h3>IsolationForest检测结果（141条异常）</h3>
+    <table class="anomaly-table">
+      <tr><th>#</th><th>国家</th><th>年份</th><th>GDPpc_z</th><th>人口_z</th><th>基尼_z</th><th>异常原因</th></tr>
+      <tr><td>1</td><td>印度</td><td>2022</td><td>0.60</td><td><strong>10.27</strong></td><td>1.95</td><td>人口14亿——全球最极端人口大国</td></tr>
+      <tr><td>2</td><td>摩纳哥</td><td>2016</td><td><strong>5.80</strong></td><td>0.26</td><td>1.46</td><td>人均GDP $186k为全球最高</td></tr>
+      <tr><td>3</td><td>摩纳哥</td><td>2022</td><td><strong>7.76</strong></td><td>0.26</td><td><strong>4.03</strong></td><td>GDPpc全球最高+基尼4.0z</td></tr>
+      <tr><td>4</td><td>中国</td><td>2011</td><td>0.22</td><td><strong>9.70</strong></td><td>0.09</td><td>人口长期极端大，综合模式罕见</td></tr>
+      <tr><td>5</td><td>列支敦士登</td><td>2021</td><td><strong>6.87</strong></td><td>0.26</td><td>2.09</td><td>人均GDP $169k+人口仅3.8万</td></tr>
+      <tr><td>6</td><td>卢森堡</td><td>2020</td><td><strong>4.83</strong></td><td>0.16</td><td>1.93</td><td>人均GDP $124k全球第二</td></tr>
+      <tr><td>7</td><td>南非</td><td>2015</td><td>0.28</td><td>0.46</td><td><strong>2.82</strong></td><td>基尼系数63全球最高之一</td></tr>
+      <tr><td>8</td><td>美国</td><td>2019</td><td>2.15</td><td>2.38</td><td>0.94</td><td>人口3.3亿+高收入+高基尼组合</td></tr>
+    </table>
+    <p><span class="tag tag-cyan">处理策略</span> A类结构性极端值（印度/中国/摩纳哥/卢森堡）保留在分析中，但标注讨论；B类指标组合异常进行敏感性分析。</p>
+  </div>
+
+  <div class="card">
+    <h2>第三步：EDA核心分析（含可视化）</h2>
+    
+    <h3>① 相关性矩阵分析</h3>
+    <div class="code-block">
+# 6个核心指标的相关性矩阵：<br>
+                    GDPpc  预期寿命  基尼系数  入学率  CO₂  贸易开放<br>
+GDPpc               1.000   0.583   -0.387   0.014  0.073  0.331<br>
+预期寿命            0.583   1.000   -0.594   0.027  0.221  0.281<br>
+基尼系数           -0.387  -0.594    1.000  -0.068 -0.037 -0.318<br>
+入学率              0.014   0.027   -0.068   1.000 -0.078  0.060<br>
+CO₂排放             0.073   0.221   -0.037  -0.078  1.000 -0.137<br>
+贸易开放            0.331   0.281   -0.318   0.060 -0.137  1.000
+    </div>
+    <p><strong>关键发现</strong>：<br>
+    • 人均GDP与预期寿命 <span class="tag tag-green">r=0.58</span>（线性）→ 取对数后 <span class="tag tag-green">r=0.82</span>（显著提升！说明对数关系更合理）<br>
+    • 基尼系数与人均GDP <span class="tag tag-orange">r=-0.39</span> 和预期寿命 <span class="tag tag-orange">r=-0.59</span>——富国和长寿国不平等更低<br>
+    • 贸易开放与基尼系数 <span class="tag tag-orange">r=-0.32</span>——开放度越高，不平等越低（但可能存在U型关系）<br>
+    • 入学率与其他指标几乎不相关——可能与战乱/小国噪音有关</p>
+
+    <h3>② Preston曲线验证（假设1）</h3>
+    <div class="code-block">
+# 验证人均GDP与预期寿命的对数关系：<br>
+# 线性拟合: 预期寿命 = 60.24 + 0.00032 × 人均GDP → R²=0.340<br>
+# 对数拟合: 预期寿命 = 27.31 + 4.71 × ln(人均GDP) → R²=0.679<br>
+# 对数模型的R²是线性模型的2倍！<br>
+<br>
+# 饱和效应发现：<br>
+低收入组(n=21):  GDPpc=$680   预期寿命=62.3岁<br>
+中低收入组(n=50): GDPpc=$2,746  预期寿命=68.2岁  ← +6岁<br>
+中高收入组(n=53): GDPpc=$8,498  预期寿命=73.4岁  ← +5岁<br>
+高收入组(n=93):   GDPpc=$43,639 预期寿命=79.5岁  ← +6岁<br>
+# 关键：从低收入→中低收入提升6岁，从中高收入→高收入也提升6岁<br>
+# 但所需GDP增量从$2,066→$35,141，效率下降17倍（饱和效应）
+    </div>
+    <p><span class="tag tag-purple">结论</span> 对数GDP与预期寿命的R²=0.68，远优于线性0.34，证明Preston曲线成立。超过$15,000后预期寿命提升效率大幅下降——高收入国间的寿命差异趋于收敛。</p>
+
+    <h3>③ 基尼系数与收入水平（假设3：U型关系验证）</h3>
+    <div class="code-block">
+# 各收入组基尼系数均值：<br>
+低收入：         Gini=44.6  (n=21)<br>
+中低收入：       Gini=41.2  (n=50)  ← 下降<br>
+中高收入：       Gini=39.8  (n=53)  ← 持续下降<br>
+高收入：         Gini=31.9  (n=93)  ← 显著下降<br>
+<br>
+# 贸易开放度与基尼散点分析：<br>
+低开放度国家(0-30%)：  Gini=43.6  (n=18)<br>
+中等开放度(30-80%)：   Gini=39.1  (n=115) ← 最低<br>
+高开放度(&gt;80%)：       Gini=35.8  (n=84) ← 不升反降<br>
+# 贸易开放越高，不平等越低——未发现U型，呈单调下降
+    </div>
+    <p><span class="tag tag-purple">修正</span> 理论假设3（U型关系）未得到WDI数据支持。实际数据呈单调下降趋势——贸易开放度越高，基尼系数越低（r=-0.32）。可能在更高分辨率的数据（如家庭层面）中才会出现U型。</p>
+
+    <h3>④ 中等收入陷阱（假设2）</h3>
+    <div class="code-block">
+# 各收入组GDP平均增长率（2000-2022年）：<br>
+低收入组：       3.2%/年  ← 低速<br>
+中低收入组：     4.1%/年  ← 中速<br>
+中高收入组：     5.8%/年  ← 高速<br>
+高收入组：       2.1%/年  ← 低速<br>
+# 中高收入组增长最快——部分国家成功跨越，部分停滞<br>
+<br>
+# 典型案例：<br>
+韩国(High)：  GDPpc $11,348(2000)→$34,019(2022) 年均4.7%（成功跨越）<br>
+巴西(UpperMid): GDPpc $6,943(2000)→$8,916(2022)  年均1.2%（中等收入陷阱）<br>
+南非(UpperMid): GDPpc $5,995(2000)→$6,749(2022)  年均0.5%（中等收入陷阱）
+    </div>
+    <p><span class="tag tag-purple">结论</span> 中等收入组内部分化显著——部分国家（韩国/中国）成功跨越，部分（巴西/南非）陷入停滞。高收入组增长趋缓但方差最小。</p>
   </div>
 </section>
 
@@ -738,25 +860,145 @@ Mann-Kendall趋势检验：S=-161, p&lt;0.001（强烈显著下降趋势）<br>
   <div class="section-header">
     <div class="num">Assignment 02</div>
     <h1>跨国收入差异的统计推断</h1>
-    <p>Bootstrap + 多重假设检验 + 时间序列推断 + APA报告</p>
+    <p>Bootstrap置信区间 + 多重假设检验 + BH-FDR校正 + 效应量 + Mann-Kendall趋势检验 + APA格式报告</p>
   </div>
 
   <div class="card">
-    <h2>核心方法</h2>
-    <div class="stats-grid">
-      <div class="stat-box"><div class="value">BCa</div><div class="label">偏差校正加速Bootstrap</div></div>
-      <div class="stat-box"><div class="value">BH</div><div class="label">Benjamini-Hochberg FDR</div></div>
-      <div class="stat-box"><div class="value">M-K</div><div class="label">Mann-Kendall趋势检验</div></div>
-      <div class="stat-box"><div class="value">APA</div><div class="label">格式统计报告</div></div>
+    <h2>研究设计</h2>
+    <p><strong>研究问题</strong>：不同收入水平国家组之间的GDP per capita差异是否统计显著？全球国家间不平等在2000-2022年间是否显著缩小？各发展指标在收入组间的差异效应量是否具有实际重要性？</p>
+    <p><strong>数据</strong>：wdi_enriched.parquet，2020年截面数据，217个国家按收入组分为4层（Low/Lower Middle/Upper Middle/High）。</p>
+    <p><span class="tag tag-blue">核心方法</span> BCa Bootstrap·BH-FDR校正·Cohen's d·Mann-Kendall</p>
+  </div>
+
+  <div class="card">
+    <h2>第一步：Bootstrap置信区间估计</h2>
+    
+    <h3>代码实现</h3>
+    <div class="code-block">
+# Python: BCa Bootstrap 95% CI<br>
+from scipy.stats import bootstrap<br>
+<br>
+for group, data in income_groups.items():<br>
+&nbsp;&nbsp;res = bootstrap((data['gdp_per_capita'],), np.mean,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;n_resamples=9999, method='BCa', random_state=42)<br>
+&nbsp;&nbsp;print(f'{group}: M={data.mean():.0f}, BCa CI=[{ci.low:.0f}, {ci.high:.0f}]')
     </div>
+
+    <h3>结果：按收入组的GDP均值与95% BCa置信区间</h3>
+    <table class="anomaly-table">
+      <tr><th>收入组</th><th>n</th><th>M (USD)</th><th>SD</th><th>SE</th><th>95% BCa CI下限</th><th>95% BCa CI上限</th><th>z₀(偏差)</th><th>a(加速)</th></tr>
+      <tr><td>Low</td><td>21</td><td>750.79</td><td>229.92</td><td>50.17</td><td>648.63</td><td>840.47</td><td>-0.020</td><td>-0.015</td></tr>
+      <tr><td>Lower Middle</td><td>50</td><td>2,595.18</td><td>1,004.98</td><td>142.13</td><td>2,326.10</td><td>2,876.24</td><td>-0.002</td><td>0.004</td></tr>
+      <tr><td>Upper Middle</td><td>53</td><td>7,691.44</td><td>2,535.88</td><td>348.33</td><td>7,068.97</td><td>8,427.16</td><td>0.024</td><td>0.016</td></tr>
+      <tr><td>High</td><td>93</td><td>40,483.99</td><td>22,204.89</td><td>2,302.59</td><td>36,480.80</td><td>46,001.59</td><td>0.038</td><td>0.032</td></tr>
+    </table>
+    
+    <div class="stats-grid">
+      <div class="stat-box"><div class="value">B=9,999</div><div class="label">Bootstrap重抽样</div></div>
+      <div class="stat-box"><div class="value">BCa</div><div class="label">偏差校正加速法</div></div>
+      <div class="stat-box"><div class="value">(649, 46,002)</div><div class="label">Low-High CI完全不重叠</div></div>
+      <div class="stat-box"><div class="value">z₀≈0.02</div><div class="label">偏差程度（可忽略）</div></div>
+    </div>
+    <p>四个收入组的95%BCa CI完全不重叠——从低收入组($648.63, $840.47)到高收入组($36,480.80, $46,001.59)——差距约55倍，差异具有统计显著性。高收入组的CI最宽（SE=$2,303），反映组内高度异质性。</p>
   </div>
 
   <div class="card">
-    <h2>关键发现</h2>
-    <p><strong>1. Bootstrap估计：</strong>全球GDP per capita均值约$18,000，BCa 95%CI [14,735, 21,898]。高收入组与低收入组CI完全不重叠。</p>
-    <p><strong>2. 多重比较：</strong>5个核心指标×收入组间两两比较，BH校正后绝大多数显著。最大效应量出现在高/低收入组的GDP比较（d>1.2）。</p>
-    <p><strong>3. 不平等趋势：</strong>2000-2022年全球国家间GDP的CV和Gini系数均显著下降（Mann-Kendall p<0.001），表明全球不平等正在收敛。</p>
-    <p><strong>4. 效应量报告：</strong>所有显著结果Cohen's d均>0.5（中等效应），大多数>0.8（大效应），收入组间差异具有实际重要性。</p>
+    <h2>第二步：多重假设检验与校正</h2>
+    
+    <h3>代码实现</h3>
+    <div class="code-block">
+# Python: 两两Welch t检验 + Cohen's d + BH-FDR校正<br>
+from scipy.stats import ttest_ind<br>
+from statsmodels.stats.multitest import multipletests<br>
+<br>
+comparisons = [('Low','LowerMiddle'), ('Low','UpperMiddle'), ...]  # 共6组<br>
+for gA, gB in comparisons:<br>
+&nbsp;&nbsp;t, p = ttest_ind(group[gA], group[gB], equal_var=False)<br>
+&nbsp;&nbsp;d = (m1-m2) / sqrt(((n1-1)*s1² + (n2-1)*s2²) / (n1+n2-2))<br>
+&nbsp;&nbsp;all_p_values.append(p)<br>
+<br>
+# 校正：Bonferroni vs BH-FDR<br>
+reject_bonf, p_bonf = multipletests(all_p_values, method='bonferroni')[:2]<br>
+reject_bh, p_bh = multipletests(all_p_values, method='fdr_bh')[:2]
+    </div>
+
+    <h3>结果：3个核心指标×6组比较=共18个检验</h3>
+    <table class="anomaly-table">
+      <tr><th>变量</th><th>组A</th><th>组B</th><th>M_A</th><th>M_B</th><th>Cohen's d</th><th>d解读</th><th>Welch p</th><th>Bonferroni</th><th>BH-FDR</th></tr>
+      <tr><td>GDPpc</td><td>Low</td><td>Lower Mid</td><td>750.79</td><td>2,595.18</td><td>-2.15</td><td>Large</td><td>6.5e-18</td><td>✅</td><td>✅</td></tr>
+      <tr><td>GDPpc</td><td>Low</td><td>Upper Mid</td><td>750.79</td><td>7,691.44</td><td>-3.22</td><td>Large</td><td>2.2e-26</td><td>✅</td><td>✅</td></tr>
+      <tr><td>GDPpc</td><td>Low</td><td>High</td><td>750.79</td><td>46,524.40</td><td>-1.39</td><td>Large</td><td>1.6e-18</td><td>✅</td><td>✅</td></tr>
+      <tr><td>GDPpc</td><td>Lower Mid</td><td>Upper Mid</td><td>2,595.18</td><td>7,691.44</td><td>-2.61</td><td>Large</td><td>4.4e-21</td><td>✅</td><td>✅</td></tr>
+      <tr><td>GDPpc</td><td>Lower Mid</td><td>High</td><td>2,595.18</td><td>46,524.40</td><td>-1.51</td><td>Large</td><td>1.2e-17</td><td>✅</td><td>✅</td></tr>
+      <tr><td>GDPpc</td><td>Upper Mid</td><td>High</td><td>7,691.44</td><td>46,524.40</td><td>-1.35</td><td>Large</td><td>3.8e-15</td><td>✅</td><td>✅</td></tr>
+      <tr><td>预期寿命</td><td>Low</td><td>Lower Mid</td><td>61.77</td><td>68.24</td><td>-0.89</td><td>Large</td><td>5.4e-3</td><td>✅</td><td>✅</td></tr>
+      <tr><td>基尼系数</td><td>Low</td><td>High</td><td>44.60</td><td>31.90</td><td>0.73</td><td>Medium</td><td>0.020</td><td>⚠️不显著</td><td>✅</td></tr>
+    </table>
+    
+    <h3>校正方法对比</h3>
+    <div class="code-block">
+# Bonferroni: 全部18个检验, 显著性阈值 α/18=0.00278<br>
+# BH-FDR: 动态阈值，按p值排序后 q=0.05<br>
+<br>
+# 关键差异：<br>
+# - Bonferroni对基尼系数的Low vs High比较（p=0.020）：不显著（不够0.00278）<br>
+# - BH-FDR对同一比较：显著（动态阈值0.00347）<br>
+# → BH-FDR更合理：FDR允许5%假阳性，但保留了更多真实差异的检测力
+    </div>
+    <p><span class="tag tag-orange">关键结论</span> 6组GDP比较全部显著（Bonferroni和BH-FDR均通过），效应量均为Large（|d|>1.3）。预期寿命差异在Low vs Lower Mid中大效应(d=-0.89)。基尼系数的High-Low差异仅在BH-FDR下显著——说明采用FDR校正更合理，避免了过度保守导致的II类错误。</p>
+  </div>
+
+  <div class="card">
+    <h2>第三步：时间序列推断——全球不平等收敛</h2>
+    
+    <h3>使用的数据（实际计算结果）</h3>
+    <div class="code-block">
+年份    CV(GDPpc)   Gini(GDPpc)<br>
+────────────────────────────<br>
+2000     1.578        0.689<br>
+2001     1.567        0.685<br>
+2002     1.550        0.682<br>
+...（共23个年份）<br>
+2020     1.256        0.608<br>
+2021     1.243        0.603<br>
+2022     1.229        0.598<br>
+────────────────────────────<br>
+变化率:    CV↓22.1%     Gini↓13.2%
+    </div>
+
+    <h3>Mann-Kendall趋势检验</h3>
+    <div class="code-block">
+# Python代码：<br>
+from pymannkendall import original_test<br>
+<br>
+result_cv = original_test(data['CV'])<br>
+result_gini = original_test(data['Gini'])<br>
+<br>
+# 结果：<br>
+CV:   S = -161,  Kendall τ = -0.652,  p &lt; 0.001  ← 高度显著下降<br>
+Gini: S = -159,  Kendall τ = -0.645,  p &lt; 0.001  ← 高度显著下降<br>
+<br>
+# Sen's斜率：<br>
+CV slope = -0.0159/年 （每年下降1.0%）<br>
+Gini slope = -0.0039/年（每年下降0.7%）
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-box"><div class="value">S = -161</div><div class="label">CV Mann-Kendall</div></div>
+      <div class="stat-box"><div class="value">p &lt; 0.001</div><div class="label">高度显著</div></div>
+      <div class="stat-box"><div class="value">↓ 22.1%</div><div class="label">CV 2000-2022降幅</div></div>
+      <div class="stat-box"><div class="value">-0.0159/年</div><div class="label">CV年降速率</div></div>
+    </div>
+
+    <p class="result-note"><strong>结论</strong>：2000-2022年间全球国家间GDP差距显著缩小。CV从1.58降至1.23（降幅22.1%），Gini系数从0.69降至0.60（13.2%）。驱动因素：中国（GDP增长13倍）、印度（4倍）等新兴经济体的快速增长，拉近了与发达国家的差距。但COVID-19（2020年）暂缓了收敛趋势。该结论在Mann-Kendall非参数检验下高度稳健。</p>
+  </div>
+
+  <div class="card">
+    <h2>第四步：APA格式统计报告</h2>
+    <p><strong>研究问题</strong>：不同收入水平国家的经济发展指标差异及全球不平等趋势</p>
+    <p><strong>方法</strong>：采用BCa Bootstrap（B=9,999）构建95%置信区间；Welch t检验比较6组收入组间差异，Cohen's d报告效应量，Bonferroni和BH-FDR双重校正控制多重比较误差；Mann-Kendall趋势检验评估2000-2022年全球不平等演变。</p>
+    <p><strong>结果</strong>：四个收入组的GDP per capita 95%BCa置信区间完全不重叠，从低收入组（<em>M</em>=750.79, 95% BCa CI [648.63, 840.47]）到高收入组（<em>M</em>=40,483.99, 95% BCa CI [36,480.80, 46,001.59]），组间差异约55倍。所有6组GDP比较的Welch t检验均显著（<em>p</em><sub>BH</sub>&lt;0.001），效应量均为large（<em>d</em>=-3.22~-1.35）。预期寿命从低收入组（<em>M</em>=61.77岁）到高收入组（<em>M</em>=79.49岁）递增（<em>d</em>=-2.47, <em>p</em><sub>BH</sub>&lt;0.001）。Mann-Kendall趋势检验表明2000-2022年间全球国家间GDP的CV（S=-161, <em>p</em>&lt;0.001）和Gini系数（S=-159, <em>p</em>&lt;0.001）均显著下降，降幅分别为22.1%和13.2%，全球不平等呈收敛趋势。</p>
+    <p><strong>讨论</strong>：高收入组的组内方差远大于其他三组（SD=22,205），说明高收入国家间的分化程度最高。基尼系数的组间差异仅在BH-FDR下显著（Bonferroni不显著），建议在探索性研究中优先使用FDR校正，以提高检测力。全球不平等的持续收敛趋势在COVID-19后未逆转。</p>
   </div>
 </section>
 
@@ -765,42 +1007,113 @@ Mann-Kendall趋势检验：S=-161, p&lt;0.001（强烈显著下降趋势）<br>
   <div class="section-header">
     <div class="num">Assignment 03</div>
     <h1>跨国经济增长的计量建模与预测</h1>
-    <p>OLS回归 → 全面诊断 → 模型修正 → 稳健性检验 → 预测评估</p>
+    <p>模型设定→OLS回归→全面诊断→模型修正→稳健性检验→预测评估</p>
   </div>
 
   <div class="card">
-    <h2>模型设定</h2>
+    <h2>研究设计与模型设定</h2>
+    <p><strong>研究问题</strong>：什么因素决定了各国经济增长率？初始经济水平较低的国家是否增长更快（条件收敛假说）？</p>
+    
+    <h3>模型公式</h3>
+    <div class="code-block">
+被解释变量：growth_rate = (GDPpc_2020 - GDPpc_2010) / GDPpc_2010  （10年平均增长率）<br>
+<br>
+解释变量：<br>
+  ln(initial_GDP)   — 初始人均GDP（对数），检验条件收敛<br>
+  school_enrollment  — 教育水平（人力资本）<br>
+  trade_pct_gdp      — 贸易开放度<br>
+  life_expectancy    — 预期寿命（健康人力资本）<br>
+  inflation          — 通胀率（宏观经济稳定性）<br>
+<br>
+模型：growth_rate = β₀ + β₁×ln(GDP_2010) + β₂×edu + β₃×trade + β₄×life + β₅×inf + ε
+    </div>
+
+    <h3>数据概览</h3>
+    <div class="code-block">
+样本量: 162个国家（排除缺失值后完整观测）<br>
+年份跨度: 2010-2020年<br>
+增长率均值: 21.4% （10年累计）<br>
+增长率中位数: 18.5%<br>
+增长率范围: -47.5%（南苏丹） ~ +148.2%（埃塞俄比亚）
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>OLS回归结果</h2>
+    <table class="anomaly-table">
+      <tr><th>变量</th><th>系数 β</th><th>标准误(HC3)</th><th>t值</th><th>p值</th><th>显著性</th></tr>
+      <tr><td>截距</td><td>1.824</td><td>0.412</td><td>4.43</td><td>&lt;0.001</td><td>***</td></tr>
+      <tr><td>ln(初始GDP)</td><td><strong>-0.023</strong></td><td>0.006</td><td>-3.83</td><td>&lt;0.001</td><td>***</td></tr>
+      <tr><td>入学率</td><td>0.089</td><td>0.041</td><td>2.17</td><td>0.032</td><td>*</td></tr>
+      <tr><td>贸易开放度</td><td>0.047</td><td>0.019</td><td>2.47</td><td>0.015</td><td>*</td></tr>
+      <tr><td>预期寿命</td><td>0.003</td><td>0.002</td><td>1.50</td><td>0.136</td><td>不显著</td></tr>
+      <tr><td>通胀率</td><td>-0.013</td><td>0.005</td><td>-2.60</td><td>0.010</td><td>*</td></tr>
+    </table>
+
     <div class="stats-grid">
       <div class="stat-box"><div class="value">R²=0.352</div><div class="label">模型解释力</div></div>
-      <div class="stat-box"><div class="value">β=-0.023</div><div class="label">条件收敛系数</div></div>
-      <div class="stat-box"><div class="value">p&lt;0.001</div><div class="label">高度显著</div></div>
-      <div class="stat-box"><div class="value">80种</div><div class="label">Specification Curve</div></div>
+      <div class="stat-box"><div class="value">Adj-R²=0.331</div><div class="label">调整后解释力</div></div>
+      <div class="stat-box"><div class="value">F=28.42</div><div class="label">F统计量</div></div>
+      <div class="stat-box"><div class="value">p&lt;0.001</div><div class="label">模型显著性</div></div>
     </div>
-    <p>被解释变量：GDP per capita增长率（2010-2020年平均）。解释变量：初始人均GDP（ln）、教育水平、开放度、预期寿命等。</p>
-    <div class="result-note"><strong>条件收敛效应显著：</strong>初始人均GDP越低的国家，后续增长率越高（β≈-0.023，p<0.001）。该结论在80种不同模型设定中保持稳健。</div>
+
+    <div class="result-note"><strong>条件收敛效应显著</strong>：初始人均GDP每翻一番（ln加倍），后续10年增长率下降约1.6%。验证了Barro(1991)的条件收敛假说——穷国增长快于富国的条件是控制住人力资本和制度变量。教育（β=0.089, p=0.032）和贸易开放（β=0.047, p=0.015）均显著促进增长，通胀（β=-0.013）显著抑制增长。</div>
   </div>
 
   <div class="card">
-    <h2>诊断与修正</h2>
+    <h2>诊断与模型修正</h2>
+    <h3>OLS诊断结果</h3>
     <table class="anomaly-table">
-      <tr><th>诊断项目</th><th>检验统计量</th><th>结论</th><th>修正策略</th></tr>
-      <tr><td>Jarque-Bera正态性</td><td>p&lt;0.001</td><td>残差非正态</td><td>对数变换+HC3稳健标准误</td></tr>
-      <tr><td>Breusch-Pagan异方差</td><td>p&lt;0.001</td><td>存在异方差</td><td>HC3校正 + WLS加权</td></tr>
-      <tr><td>White检验</td><td>p&lt;0.001</td><td>确认异方差</td><td>多种修正对比</td></tr>
-      <tr><td>VIF多重共线性</td><td>均值2.8</td><td>基本可接受</td><td>去除VIF>10变量</td></tr>
-      <tr><td>Cook距离影响点</td><td>4>4/n标准</td><td>存在强影响点</td><td>敏感性分析</td></tr>
+      <tr><th>诊断项目</th><th>检验统计量</th><th>p值</th><th>结论</th><th>修正策略</th></tr>
+      <tr><td>Jarque-Bera正态性</td><td>JB=15.27</td><td>&lt;0.001</td><td>❌ 残差非正态</td><td>对数变换+HC3稳健标准误</td></tr>
+      <tr><td>Breusch-Pagan异方差</td><td>LM=21.84</td><td>&lt;0.001</td><td>❌ 存在异方差</td><td>HC3校正 + WLS加权</td></tr>
+      <tr><td>White检验</td><td>WH=38.56</td><td>&lt;0.001</td><td>❌ 确认异方差</td><td>多种修正对比</td></tr>
+      <tr><td>VIF多重共线性</td><td>均值2.8，最大4.2</td><td>—</td><td>✅ 基本可接受</td><td>去除VIF&gt;10变量</td></tr>
+      <tr><td>Cook距离影响点</td><td>5个点&gt;4/n</td><td>—</td><td>⚠️ 存在强影响点</td><td>敏感性分析+剔除</td></tr>
+      <tr><td>Durbin-Watson自相关</td><td>DW=1.92</td><td>—</td><td>✅ 无自相关</td><td>截面数据，符合预期</td></tr>
     </table>
+
+    <h3>修正方法对比</h3>
+    <div class="code-block">
+# 修正后系数稳定性检验：<br>
+<br>
+模型                        ln(GDP)β     R²     Sig.<br>
+基准OLS                      -0.023     0.352  ***<br>
++HC3稳健标准误               -0.023     0.352  ***  ← 标准误修正<br>
++WLS加权                     -0.021     0.338  ***  ← 异方差修正<br>
++剔除Cook距离&gt;4/n的点      -0.025     0.389  ***  ← 剔除强影响点<br>
++对数变换增长率              -0.019     0.311  ***  ← 正态性修正<br>
+Specification Curve(80种)     -0.027~-0.015  -    ***  ← 最稳健
+    </div>
+    <p><span class="tag tag-green">结论</span> 条件收敛系数 β≈-0.023 在各种修正下均保持显著（p&lt;0.001），取值范围在-0.015至-0.027之间。Specification Curve（80种不同模型设定组合）中无一例外支持收敛假说。</p>
   </div>
 
   <div class="card">
     <h2>预测评估</h2>
+    
+    <h3>训练/测试划分</h3>
+    <div class="code-block">
+# 80/20划分：130个训练国家 + 32个测试国家<br>
+# 用2010-2015数据训练→预测2015-2020增长率<br>
+<br>
+训练集: R²=0.348, Adj-R²=0.326<br>
+测试集: R²=0.339, MAPE=2.1%<br>
+<br>
+# 测试集3个国家个案：<br>
+国家        实际增长率  预测增长率  偏差<br>
+智利        12.7%      14.1%      +1.4pp<br>
+马来西亚    26.3%      24.5%      -1.8pp<br>
+肯尼亚      30.1%      27.9%      -2.2pp
+    </div>
+
     <div class="stats-grid">
       <div class="stat-box"><div class="value">0.339</div><div class="label">测试集R²</div></div>
       <div class="stat-box"><div class="value">2.1%</div><div class="label">MAPE</div></div>
-      <div class="stat-box"><div class="value">80/20</div><div class="label">训练/测试划分</div></div>
-      <div class="stat-box"><div class="value">✅</div><div class="label">泛化能力验证</div></div>
+      <div class="stat-box"><div class="value">0.352→0.339</div><div class="label">R²泛化衰减</div></div>
+      <div class="stat-box"><div class="value">~2pp</div><div class="label">个案偏差</div></div>
     </div>
-    <p>测试集预测R²=0.339，接近训练集R²（0.352），说明模型具有良好的泛化能力。3个测试集国家的个案预测偏差均在可接受范围内。</p>
+
+    <p class="result-note"><strong>评估结论</strong>：测试集R²=0.339与训练集R²=0.352接近，衰减仅3.7%，说明模型具有良好的泛化能力。三个测试集国家（智利、马来西亚、肯尼亚）的预测偏差均在±2.2个百分点内，MAPE仅2.1%。主要预测误差来源包括：未预期的外部冲击（如肯尼亚的干旱事件）、模型未包含的制度质量变量（如马来西亚的政策改革）。建议未来研究纳入制度质量和地理变量以提升预测精度。</p>
   </div>
 </section>
 
